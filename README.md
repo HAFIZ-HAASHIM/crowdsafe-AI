@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # CrowdSense — Crowd Density & Movement Monitoring (MVP)
 
 Real-time people detection, density heatmap, and abnormal movement alerting using a single camera.
@@ -44,3 +45,7 @@ python app.py --source demo_videos/sample.mp4
 - Replace greedy matching with SORT/ByteTrack for stable tracking IDs.
 - Zone-specific analytics and alerting.
 - Persist logs (CSV/DB) and build a richer UI if needed.
+=======
+# crowdsafe-AI
+CrowdSafe AI is an AI-powered crowd monitoring and safety system designed to prevent overcrowding and stampede incidents. It uses intelligent analysis to detect crowd density risks early and support proactive decision-making for safer public spaces and events.
+>>>>>>> 2a8999d34c8c8580bc5f6f1748065ed809ce63e1
