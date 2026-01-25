@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+venv/
+
+# Model weights
+*.pt
+*.onnx
+*.h5
+
+# Environment files
+.env
+
+# OS
+.DS_Store

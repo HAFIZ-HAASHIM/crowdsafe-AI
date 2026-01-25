@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeCrowd AI — Live Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0B0C10; --panel:#111827; --border:#1f2937; --text:#e5e7eb; --muted:#9ca3af;
+      --accent:#00C3FF; --safe:#00FF85; --warn:#fbbf24; --danger:#FF3B3B;
+    }
+    *{ box-sizing:border-box }
+    body { font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 14px 22px; background: var(--panel); border-bottom: 1px solid var(--border); display:flex; align-items:center; justify-content:space-between }
+    .title { display:flex; gap:12px; align-items:center }
+    .title h1 { margin:0; font-size: 18px; }
+    .status { font-size: 14px; color: var(--safe); }
+    .top-meta { display:flex; gap:16px; align-items:center; color: var(--muted); }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 22px; padding: 22px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+    .panel h2 { margin: 0 0 8px 0; font-size: 15px; }
+    .live img { width: 100%; border-radius: 8px; border:1px solid var(--border); }
+    .controls { display:flex; gap:10px; align-items:center; margin-bottom:10px }
+    button{ background: #0ea5e9; color:white; border:none; padding:8px 12px; border-radius:8px; cursor:pointer }
+    button.alt{ background:#374151 }
+    .meter-wrap{ background:#0b1220; border:1px solid var(--border); height:12px; border-radius:999px; overflow:hidden }
+    .meter { height:100%; width:0%; transition: width .3s ease; background: linear-gradient(90deg, var(--safe), var(--warn), var(--danger)); }
+    .kv { display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+    .card { background:#0b1220; border:1px solid var(--border); border-radius:8px; padding:10px }
+    .card h3{ margin:0 0 6px 0; font-size:13px; color:var(--muted) }
+    .card .big{ font-size:22px; font-weight:700 }
+    .alerts { max-height: 420px; overflow:auto; display:flex; flex-direction:column; gap:8px }
+    .alert { padding:10px; border-radius:8px; border:1px solid var(--border); background:#0b1220; box-shadow:0 0 0 0 rgba(255,59,59,0); animation: glow 2s ease-out 1; }
+    .alert.warn{ border-color:#fbbf24; }
+    .alert.danger{ border-color: var(--danger); }
+    @keyframes glow { 0%{ box-shadow:0 0 16px 2px rgba(0,195,255,.35) } 100%{ box-shadow:0 0 0 0 rgba(0,195,255,0) } }
+    footer { padding: 12px 22px; border-top: 1px solid var(--border); color: var(--muted); display:flex; justify-content:space-between }
+    .muted{ color: var(--muted) }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center }
+    input, select{ background:#0b1220; border:1px solid var(--border); color:var(--text); padding:8px; border-radius:8px }
+    .charts { display:grid; grid-template-columns: 1fr; gap:12px; margin-top:14px }
+    .chart-card { background:#0b1220; border:1px solid var(--border); border-radius:8px; padding:10px }
+    canvas { width:100%; height:180px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script>
+    let heatmapEnabled = true;
+    let lastAlerts = [];
+    let lastPanic = false;
+    let charts = { people:null, movement:null, fps:null };
+
+    async function fetchStats(){
+      try{
+        const res = await fetch('/stats');
+        const s = await res.json();
+        document.getElementById('people').textContent = s.crowd_count ?? 0;
+        document.getElementById('fps').textContent = (s.fps||0).toFixed(1);
+        document.getElementById('movement').textContent = (s.max_movement||0).toFixed(1)+' px';
+        const ratio = Math.max(0, Math.min(1, s.density_ratio||0));
+        document.getElementById('meter').style.width = (ratio*100).toFixed(0)+'%';
+        const statusEl = document.getElementById('status');
+        if(s.panic){ statusEl.textContent = '🔴 Danger'; statusEl.style.color = '#FF3B3B'; }
+        else if(ratio > 0.6){ statusEl.textContent = '🟡 Warning'; statusEl.style.color = '#fbbf24'; }
+        else { statusEl.textContent = '🟢 Safe'; statusEl.style.color = '#00FF85'; }
+
+        if(s.panic && !lastPanic){ pushAlert('🚨 Rapid movement detected — potential panic surge', 'danger'); }
+        lastPanic = !!s.panic;
+      }catch(e){ /* ignore */ }
+    }
+
+    async function fetchHistory(){
+      try{
+        const res = await fetch('/history');
+        const h = await res.json();
+        const labels = (h.ts||[]).map(t=> new Date(t*1000).toLocaleTimeString());
+        const cfg = (arr)=> ({ labels, datasets:[{ data: arr, borderColor:'#00C3FF', tension:0.25, fill:false }]});
+        if(charts.people){ charts.people.data = cfg(h.people||[]); charts.people.update('none'); }
+        if(charts.movement){ charts.movement.data = cfg(h.movement||[]); charts.movement.update('none'); }
+        if(charts.fps){ charts.fps.data = cfg(h.fps||[]); charts.fps.update('none'); }
+      }catch(e){ /* ignore */ }
+    }
+
+    function initCharts(){
+      const baseOptions = { responsive:true, animation:false, plugins:{ legend:{ display:false }}, scales:{ x:{ ticks:{ color:'#9ca3af'}}, y:{ ticks:{ color:'#9ca3af'}, grid:{ color:'#1f2937'}}}};
+      charts.people = new Chart(document.getElementById('chartPeople'), { type:'line', data:{ labels:[], datasets:[] }, options:{...baseOptions, plugins:{...baseOptions.plugins, title:{display:true, text:'People Count', color:'#e5e7eb'}}} });
+      charts.movement = new Chart(document.getElementById('chartMovement'), { type:'line', data:{ labels:[], datasets:[] }, options:{...baseOptions, plugins:{...baseOptions.plugins, title:{display:true, text:'Max Movement (px)', color:'#e5e7eb'}}} });
+      charts.fps = new Chart(document.getElementById('chartFps'), { type:'line', data:{ labels:[], datasets:[] }, options:{...baseOptions, plugins:{...baseOptions.plugins, title:{display:true, text:'FPS', color:'#e5e7eb'}}} });
+    }
+
+    async function toggleHeatmap(){
+      heatmapEnabled = !heatmapEnabled;
+      try{
+        await fetch('/set_heatmap', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: heatmapEnabled}) });
+      }catch(e){ }
+      document.getElementById('heatmapBtn').textContent = heatmapEnabled ? 'Hide Heatmap' : 'Show Heatmap';
+    }
+
+    function pushAlert(text, level='warn'){
+      const el = document.createElement('div');
+      el.className = 'alert '+(level==='danger'?'danger':'warn');
+      el.textContent = text;
+      const list = document.getElementById('alerts');
+      list.prepend(el);
+      const max = 12; while(list.children.length>max){ list.removeChild(list.lastChild); }
+    }
+
+    async function fetchWeather(){
+      const key = document.getElementById('wxKey').value.trim();
+      const city = document.getElementById('wxCity').value.trim();
+      if(!key || !city){ return; }
+      try{
+        const url = `https://api.openweathermap.org/data/2.5/weather?q=${encodeURIComponent(city)}&appid=${encodeURIComponent(key)}&units=metric`;
+        const res = await fetch(url);
+        const wx = await res.json();
+        const temp = wx?.main?.temp ?? '-';
+        const cond = wx?.weather?.[0]?.main ?? '-';
+        document.getElementById('wx').textContent = `${temp}°C ${cond}`;
+        if(['Rain','Thunderstorm','Extreme'].includes(cond)){
+          pushAlert('⚠️ Adverse weather — consider proactive crowd guidance', 'warn');
+        }
+      }catch(e){ /* ignore */ }
+    }
+
+    window.addEventListener('load', () => {
+      initCharts();
+      setInterval(fetchStats, 1000);
+      setInterval(fetchHistory, 1000);
+      document.getElementById('heatmapBtn').addEventListener('click', toggleHeatmap);
+      document.getElementById('wxBtn').addEventListener('click', fetchWeather);
+    });
+  </script>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <div style="width:10px;height:10px;border-radius:999px;background:#00FF85;box-shadow:0 0 12px #00FF85;"></div>
+      <h1>SafeCrowd AI — Smart Crowd Monitoring</h1>
+    </div>
+    <div class="top-meta">
+      <div>🌦️ <span id="wx">Weather: -</span></div>
+      <div class="status" id="status">🟢 Safe</div>
+    </div>
+  </header>
+  <main>
+    <section class="panel live">
+      <div class="controls">
+        <button id="heatmapBtn">Hide Heatmap</button>
+        <span class="muted">Toggle heatmap overlay</span>
+      </div>
+      <img src="/video_feed" alt="Live video stream" />
+      <p class="muted" style="font-size: 13px;">Tip: Good lighting and a lower stream width improve FPS.</p>
+    </section>
+
+    <section class="panel side">
+      <h2>Analytics & Alerts</h2>
+      <div class="kv">
+        <div class="card">
+          <h3>Total People</h3>
+          <div class="big" id="people">0</div>
+        </div>
+        <div class="card">
+          <h3>FPS</h3>
+          <div class="big" id="fps">0.0</div>
+        </div>
+        <div class="card">
+          <h3>Max Movement</h3>
+          <div class="big" id="movement">0.0 px</div>
+        </div>
+        <div class="card">
+          <h3>Density</h3>
+          <div class="meter-wrap"><div id="meter" class="meter"></div></div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px" class="row">
+        <input id="wxCity" placeholder="City (e.g., Mumbai)" />
+        <input id="wxKey" placeholder="OpenWeather API Key" />
+        <button class="alt" id="wxBtn">Fetch Weather</button>
+      </div>
+
+      <div class="charts">
+        <div class="chart-card"><canvas id="chartPeople"></canvas></div>
+        <div class="chart-card"><canvas id="chartMovement"></canvas></div>
+        <div class="chart-card"><canvas id="chartFps"></canvas></div>
+      </div>
+
+      <h2 style="margin-top:14px">Recent Alerts</h2>
+      <div id="alerts" class="alerts"></div>
+    </section>
+  </main>
+  <footer>
+    <div>Powered by AI Vision & Weather Intelligence</div>
+    <div class="muted">Last updated: <span id="ts">live</span></div>
+  </footer>
+</body>
+</html>
